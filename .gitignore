@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+uploads/
+firebase-service-account*.json
+private_uploads/
+uploads/
