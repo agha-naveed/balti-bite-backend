@@ -78,7 +78,7 @@ function attach(httpServer, corsOrigin) {
 const carrying = new Map(); // riderUserId -> { ids, at }
 const lastSaved = new Map(); // riderUserId -> { at, lat, lng }
 const CARRY_TTL_MS = 10000;
-const SAVE_EVERY_MS = 15000;
+const SAVE_EVERY_MS = 10000;
 
 async function activeOrderIds(riderUserId) {
   const key = String(riderUserId);
@@ -114,7 +114,7 @@ async function onRiderFix(user, fix) {
   io.to(rooms).emit("rider:location", payload);
 
   // The database copy is for people who open the screen later, so it does not
-  // need every fix - every 15 seconds is plenty.
+  // need every fix - every 10 seconds matches the rider app and the 5s customer refresh.
   const prev = lastSaved.get(String(user._id));
   if (!prev || Date.now() - prev.at > SAVE_EVERY_MS) {
     lastSaved.set(String(user._id), { at: Date.now(), lat, lng });
