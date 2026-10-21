@@ -340,7 +340,11 @@ router.patch("/orders/:id/ready", ...onlyKitchen, async (req, res) => {
   const kitchen = await myKitchen(req);
   const order = await Order.findOne({ _id: req.params.id, kitchenId: kitchen._id });
   if (!order) return res.status(404).json({ message: "Order not found." });
-  if (!["accepted", "preparing", "ready"].includes(order.status))
+  // "Ready" is only possible once cooking has started. "ready" itself is still
+  // allowed so the kitchen can press it again to re-send the job to a rider.
+  if (order.status === "accepted")
+    return res.status(400).json({ message: "Press Start cooking first, then Food is ready." });
+  if (!["preparing", "ready"].includes(order.status))
     return res.status(400).json({ message: "This order is not being cooked." });
 
   const justReady = order.status !== "ready";

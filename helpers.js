@@ -156,6 +156,20 @@ function toLatLng(coords) {
   return { lat, lng };
 }
 
+// Turns whatever arrived (strings from a form, numbers from JSON, blanks) into a
+// GeoJSON point, or null when there is no real position. "" and undefined used
+// to become Number("") === 0, which silently saved [0, 0] for the person.
+function readPoint(lat, lng) {
+  if (lat === undefined || lat === null || lat === "" || lng === undefined || lng === null || lng === "")
+    return null;
+  const la = Number(lat);
+  const lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
+  if (Math.abs(la) > 90 || Math.abs(lo) > 180) return null;
+  if (la === 0 && lo === 0) return null;
+  return { type: "Point", coordinates: [lo, la] };
+}
+
 // What a rider's phone last said. Sends "ageSec" (seconds since the fix)
 // rather than a timestamp, so a wrong clock on somebody's phone can never make
 // a fresh position look old.
@@ -238,6 +252,7 @@ module.exports = {
   OPEN_STATUSES,
   MOVING_STATUSES,
   toLatLng,
+  readPoint,
   riderView,
   buildLiveView,
   settings,

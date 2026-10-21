@@ -5,7 +5,7 @@
 // kitchen has packed the food and the customer is watching a map.
 
 const express = require("express");
-const { Rider, Order, Review } = require("../models");
+const { Rider, Order, Review, User } = require("../models");
 const { auth, allow, settings, addTimeline, startOfToday, dispatchWaiting } = require("../helpers");
 const { orderChanged } = require("../notifier");
 
@@ -153,11 +153,11 @@ router.patch("/location", ...onlyRider, async (req, res) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180)
     return res.status(400).json({ message: "Location is missing or invalid." });
 
-  await Rider.findOneAndUpdate(
-    { userId: req.user._id },
-    { location: { type: "Point", coordinates: [lng, lat] }, locationAt: new Date() }
-  );
+  const point = { type: "Point", coordinates: [lng, lat] };
+  await Rider.findOneAndUpdate({ userId: req.user._id }, { location: point, locationAt: new Date() });
+  await User.findByIdAndUpdate(req.user._id, { location: point });
   res.json({ ok: true });
+  dispatchWaiting().catch((e) => console.error("[dispatch]", e.message));
 });
 
 /* --------------------------------------------------------- take the job */

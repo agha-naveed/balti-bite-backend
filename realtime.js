@@ -14,7 +14,7 @@
 const jwt = require("jsonwebtoken");
 const { Server } = require("socket.io");
 const { User, Order, Rider, Kitchen } = require("./models");
-const { settings } = require("./helpers");
+const { settings, dispatchWaiting } = require("./helpers");
 
 let io = null;
 
@@ -118,10 +118,11 @@ async function onRiderFix(user, fix) {
   const prev = lastSaved.get(String(user._id));
   if (!prev || Date.now() - prev.at > SAVE_EVERY_MS) {
     lastSaved.set(String(user._id), { at: Date.now(), lat, lng });
-    Rider.findOneAndUpdate(
-      { userId: user._id },
-      { location: { type: "Point", coordinates: [lng, lat] }, locationAt: new Date() }
-    ).catch(() => {});
+    const point = { type: "Point", coordinates: [lng, lat] };
+    Rider.findOneAndUpdate({ userId: user._id }, { location: point, locationAt: new Date() }).catch(() => {});
+    User.findByIdAndUpdate(user._id, { location: point }).catch(() => {});
+    // A rider who has moved may now be the nearest one to food that is waiting.
+    dispatchWaiting().catch(() => {});
   }
 }
 

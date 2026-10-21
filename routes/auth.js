@@ -12,6 +12,7 @@ const {
   normalizePhone,
   looksLikePhone,
   normalizeCnic,
+  readPoint,
 } = require("../helpers");
 const multer = require("multer");
 const { buildTerms } = require("../terms");
@@ -121,7 +122,7 @@ router.post("/register", readForm, async (req, res) => {
           .json({ message: "Upload a photo of the front AND the back of your CNIC." });
       if (!branchAddress)
         return res.status(400).json({ message: "Add the address of your kitchen." });
-      if (branchLat === undefined || branchLat === null || branchLng === undefined)
+      if (!readPoint(branchLat, branchLng))
         return res.status(400).json({ message: "Place your kitchen on the map before continuing." });
 
       // One kitchen, one account. Checked before anything is written, so the
@@ -185,10 +186,7 @@ router.post("/register", readForm, async (req, res) => {
       password: await bcrypt.hash(password, 10),
       role,
       address: address ? String(address).trim() : "",
-      location:
-        lat !== undefined && lat !== null
-          ? { type: "Point", coordinates: [Number(lng), Number(lat)] }
-          : undefined,
+      location: readPoint(lat, lng) || undefined,
       acceptedTermsVersion: termsVersion || buildTerms().version,
       acceptedTermsAt: new Date(),
     });
@@ -211,7 +209,7 @@ router.post("/register", readForm, async (req, res) => {
         name: branchName || "Main branch",
         address: String(branchAddress).trim(),
         landmark: landmark || "",
-        location: { type: "Point", coordinates: [Number(branchLng), Number(branchLat)] },
+        location: readPoint(branchLat, branchLng),
         deliveryRadiusKm: Number(deliveryRadiusKm) || 15,
         deliveryMethod: deliveryMethod || "both",
         openTime: openTime || "09:00",
@@ -233,10 +231,8 @@ router.post("/register", readForm, async (req, res) => {
         vehicleNumber: String(vehicleNumber).trim().toUpperCase(),
         licenseNumber: String(licenseNumber).trim().toUpperCase(),
         imageUrl: riderPhotoUrl,
-        location:
-          lat !== undefined && lat !== null
-            ? { type: "Point", coordinates: [Number(lng), Number(lat)] }
-            : undefined,
+        location: readPoint(lat, lng) || undefined,
+        locationAt: readPoint(lat, lng) ? new Date() : null,
       });
     }
 
@@ -287,6 +283,20 @@ router.post("/login", loginLimit, async (req, res) => {
     console.error(err);
     res.status(500).json({ message: "Could not sign in. Try again." });
   }
+});
+
+/* ------------------------------------------------------ save my position */
+// Any signed-in person can report where they are. The app calls this when it
+// opens, so a customer's or rider's coordinates are in MongoDB even if the
+// phone could not give a fix during sign-up.
+router.patch("/location", auth, async (req, res) => {
+  const point = readPoint(req.body.lat, req.body.lng);
+  if (!point) return res.status(400).json({ message: "Location is missing or invalid." });
+
+  await User.findByIdAndUpdate(req.user._id, { location: point });
+  if (req.user.role === "rider")
+    await Rider.findOneAndUpdate({ userId: req.user._id }, { location: point, locationAt: new Date() });
+  res.json({ ok: true });
 });
 
 /* -------------------------------------------------------------- who am I */
