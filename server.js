@@ -14,6 +14,11 @@ const { startScheduler } = require("./billing");
 
 const app = express();
 
+// Railway (like most hosts) puts a proxy in front of the app. Without this the
+// server thinks every request is plain http, so photo addresses it builds come
+// out as http:// and the https phone app refuses to show them.
+app.set("trust proxy", 1);
+
 // Which origins may talk to this API.
 //
 // A browser sends the address the page was loaded from. The phone app is
