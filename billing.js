@@ -94,22 +94,39 @@ async function unbilled(mode, month) {
 // What each kitchen WOULD be billed, so the admin can choose who to send to.
 async function previewInvoices({ mode, month }) {
   const { period, groups } = await unbilled(mode, month);
+  const owed = new Map(groups.map((g) => [String(g._id), g]));
+  const billed = new Set((await Invoice.find({ period }).select("kitchenId")).map((i) => String(i.kitchenId)));
+
+  // EVERY kitchen is listed, so the admin can always see who is there. A
+  // kitchen that cannot be billed says why, instead of silently disappearing.
+  const kitchens = await Kitchen.find().select("name ownerName phone ownerId").populate("ownerId", "deletedAt");
   const rows = [];
-  for (const g of groups) {
-    if (g.commission <= 0) continue;
-    const kitchen = await Kitchen.findById(g._id).select("name ownerName phone");
-    if (!kitchen) continue;
+  for (const k of kitchens) {
+    const g = owed.get(String(k._id));
+    const amount = g ? g.commission : 0;
+    // A closed (deleted) account only stays in the list if it still owes money.
+    if (k.ownerId?.deletedAt && amount <= 0) continue;
+
+    const alreadyBilled = billed.has(String(k._id));
+    let reason = "";
+    if (alreadyBilled) reason = "Already billed for this month";
+    else if (!g) reason = "No delivered orders waiting to be billed";
+    else if (amount <= 0) reason = "Delivered orders, but no commission to charge";
+
     rows.push({
-      kitchenId: String(g._id),
-      name: kitchen.name,
-      ownerName: kitchen.ownerName,
-      orders: g.orders,
-      food: g.food,
-      amount: g.commission,
-      alreadyBilled: Boolean(await Invoice.exists({ kitchenId: g._id, period })),
+      kitchenId: String(k._id),
+      name: k.name,
+      ownerName: k.ownerName,
+      orders: g ? g.orders : 0,
+      food: g ? g.food : 0,
+      amount,
+      alreadyBilled,
+      sendable: !alreadyBilled && amount > 0,
+      reason,
     });
   }
-  rows.sort((a, b) => b.amount - a.amount);
+  // Those that can be billed first (largest bill first), then the rest by name.
+  rows.sort((x, y) => Number(y.sendable) - Number(x.sendable) || y.amount - x.amount || x.name.localeCompare(y.name));
   return { period, rows };
 }
 

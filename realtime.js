@@ -31,8 +31,8 @@ function attach(httpServer, corsOrigin) {
   io.use(async (socket, next) => {
     try {
       const payload = jwt.verify(socket.handshake.auth?.token || "", settings.jwtSecret);
-      const user = await User.findById(payload.id).select("_id role name");
-      if (!user) return next(new Error("no such user"));
+      const user = await User.findById(payload.id).select("_id role name deletedAt");
+      if (!user || user.deletedAt) return next(new Error("no such user"));
       socket.user = user;
       next();
     } catch {
@@ -137,4 +137,12 @@ function refresh(userIds, detail = {}, { admin = false } = {}) {
   if (admin) io.to("admin").emit("refresh", detail);
 }
 
-module.exports = { attach, refresh, forgetCarrying };
+// Sends one named event (a chat message, say) straight to these people's phones.
+function emitToUsers(userIds, event, payload) {
+  if (!io) return;
+  for (const id of new Set((userIds || []).filter(Boolean).map(String))) {
+    io.to(`user:${id}`).emit(event, payload);
+  }
+}
+
+module.exports = { attach, refresh, forgetCarrying, emitToUsers };

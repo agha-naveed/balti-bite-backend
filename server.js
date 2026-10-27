@@ -67,6 +67,7 @@ app.use("/api/upload", require("./routes/upload"));
 app.use("/api/map", require("./routes/map"));
 app.use("/api/devices", require("./routes/devices"));
 app.use("/api/invoices", require("./routes/invoices"));
+app.use("/api/chat", require("./routes/chat"));
 
 app.get("/api/health", (req, res) =>
   res.json({ ok: true, time: new Date(), push: require("./push").isOn() })

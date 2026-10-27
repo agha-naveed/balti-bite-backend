@@ -5,7 +5,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const rateLimit = require("express-rate-limit");
-const { User, Kitchen, Branch, Rider } = require("../models");
+const { User, Kitchen, Branch, Rider, Order, Invoice, DeviceToken } = require("../models");
 const {
   signToken,
   auth,
@@ -186,7 +186,8 @@ router.post("/register", readForm, async (req, res) => {
       password: await bcrypt.hash(password, 10),
       role,
       address: address ? String(address).trim() : "",
-      location: readPoint(lat, lng) || undefined,
+      // A rider's location is only taken when they go online, never at sign-up.
+      location: role === "rider" ? undefined : readPoint(lat, lng) || undefined,
       acceptedTermsVersion: termsVersion || buildTerms().version,
       acceptedTermsAt: new Date(),
     });
@@ -231,8 +232,8 @@ router.post("/register", readForm, async (req, res) => {
         vehicleNumber: String(vehicleNumber).trim().toUpperCase(),
         licenseNumber: String(licenseNumber).trim().toUpperCase(),
         imageUrl: riderPhotoUrl,
-        location: readPoint(lat, lng) || undefined,
-        locationAt: readPoint(lat, lng) ? new Date() : null,
+        // No location yet: it is first set when the rider taps "Go online".
+        locationAt: null,
       });
     }
 
@@ -297,6 +298,69 @@ router.patch("/location", auth, async (req, res) => {
   if (req.user.role === "rider")
     await Rider.findOneAndUpdate({ userId: req.user._id }, { location: point, locationAt: new Date() });
   res.json({ ok: true });
+});
+
+
+/* -------------------------------------------------------- delete my account */
+// Nothing is removed from the database. The account is DISABLED: it can no
+// longer sign in, a kitchen disappears from the public pages, a rider can no
+// longer be sent orders, and the phone number is freed for a new sign-up.
+// Orders, invoices and reviews keep pointing at the same records.
+const OPEN_ORDER = ["placed", "accepted", "preparing", "ready", "rider_assigned", "picked_up", "on_the_way"];
+
+router.delete("/account", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user || user.deletedAt) return res.status(404).json({ message: "This account no longer exists." });
+    if (user.role === "admin")
+      return res.status(403).json({ message: "An admin account cannot be deleted here." });
+
+    // The password is asked again, so a phone left unlocked cannot do this.
+    const ok = await bcrypt.compare(String(req.body?.password || ""), user.password);
+    if (!ok) return res.status(401).json({ message: "That password is not right." });
+
+    // Nobody walks away in the middle of somebody's food.
+    let open = 0;
+    let kitchen = null;
+    if (user.role === "customer") {
+      open = await Order.countDocuments({ customerId: user._id, status: { $in: OPEN_ORDER } });
+    } else if (user.role === "rider") {
+      open = await Order.countDocuments({ riderId: user._id, status: { $in: OPEN_ORDER } });
+    } else if (user.role === "kitchen") {
+      kitchen = await Kitchen.findOne({ ownerId: user._id });
+      if (kitchen) {
+        open = await Order.countDocuments({ kitchenId: kitchen._id, status: { $in: OPEN_ORDER } });
+        const unpaid = await Invoice.countDocuments({ kitchenId: kitchen._id, status: { $ne: "paid" } });
+        if (unpaid > 0)
+          return res.status(409).json({
+            message: "You still have an unpaid invoice. Pay it first, then you can delete the account.",
+          });
+      }
+    }
+    if (open > 0)
+      return res.status(409).json({
+        message: "You still have an order in progress. Finish it first, then delete the account.",
+      });
+
+    // Disable, do not delete.
+    user.deletedPhone = user.phone;
+    user.phone = `deleted:${user._id}`; // keeps the phone-number index unique
+    user.deletedAt = new Date();
+    await user.save();
+
+    if (user.role === "kitchen" && kitchen) await Branch.updateMany({ kitchenId: kitchen._id }, { isOpen: false });
+    if (user.role === "rider")
+      await Rider.updateOne(
+        { userId: user._id },
+        { isOnline: false, status: "suspended", decisionReason: "Account deleted by the rider.", decidedAt: new Date() }
+      );
+    await DeviceToken.deleteMany({ userId: user._id }); // no more pushes to this person
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Could not delete the account. Try again." });
+  }
 });
 
 /* -------------------------------------------------------------- who am I */

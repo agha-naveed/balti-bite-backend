@@ -34,7 +34,8 @@ async function auth(req, res, next) {
 
     const payload = jwt.verify(token, settings.jwtSecret);
     const user = await User.findById(payload.id).select("-password");
-    if (!user) return res.status(401).json({ message: "This account no longer exists." });
+    if (!user || user.deletedAt)
+      return res.status(401).json({ message: "This account no longer exists." });
 
     req.user = user;
     next();

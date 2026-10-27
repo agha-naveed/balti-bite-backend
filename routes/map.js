@@ -34,7 +34,28 @@ function shape(p) {
     notes: p.notes || "",
     lat: p.location?.coordinates?.[1],
     lng: p.location?.coordinates?.[0],
+    shape: (p.shape || []).map((v) => ({ lat: v.lat, lng: v.lng })), // [] = a pin
   };
+}
+
+// The middle of a drawn area (area-weighted; falls back to the average of the
+// corners for a very thin or degenerate outline).
+function centreOf(points) {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i], q = points[(i + 1) % points.length];
+    const f = p.lng * q.lat - q.lng * p.lat;
+    a += f;
+    cx += (p.lng + q.lng) * f;
+    cy += (p.lat + q.lat) * f;
+  }
+  if (Math.abs(a) < 1e-12) {
+    return {
+      lat: points.reduce((t, p) => t + p.lat, 0) / points.length,
+      lng: points.reduce((t, p) => t + p.lng, 0) / points.length,
+    };
+  }
+  return { lat: cy / (3 * a), lng: cx / (3 * a) };
 }
 
 /* ---------------------------------------------------------------- places */
@@ -76,9 +97,21 @@ router.get("/places", async (req, res) => {
 
 function readPlace(body) {
   const name = String(body.name || "").trim();
-  const lat = Number(body.lat);
-  const lng = Number(body.lng);
   if (!name) return { error: "Give the place a name." };
+
+  // A drawn area: at least three corners, all inside the Skardu region. The
+  // centre is worked out here, so the client never sends (or fakes) it.
+  let shape = [];
+  let lat = Number(body.lat);
+  let lng = Number(body.lng);
+  if (Array.isArray(body.shape) && body.shape.length > 0) {
+    shape = body.shape.slice(0, 200).map((v) => ({ lat: Number(v.lat), lng: Number(v.lng) }));
+    if (shape.length < 3) return { error: "An area needs at least three corners." };
+    if (shape.some((v) => !inRegion(v.lat, v.lng)))
+      return { error: "A corner is outside the Skardu region. Check latitude and longitude are not swapped." };
+    ({ lat, lng } = centreOf(shape));
+  }
+
   if (!inRegion(lat, lng))
     return { error: "That point is outside the Skardu region. Check latitude and longitude are not swapped." };
   const type = PLACE_TYPES.includes(body.type) ? body.type : "other";
@@ -93,6 +126,7 @@ function readPlace(body) {
       aliases,
       notes: String(body.notes || "").trim(),
       location: { type: "Point", coordinates: [lng, lat] },
+      shape, // [] when this is a pin: that also clears an old outline on edit
     },
   };
 }

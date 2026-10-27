@@ -38,6 +38,14 @@ const userSchema = new mongoose.Schema(
     // changes, you can tell who has seen the new text.
     acceptedTermsVersion: { type: String, default: "" },
     acceptedTermsAt: { type: Date, default: null },
+
+    // "Delete my account" never removes the record: orders, invoices and
+    // reviews still refer to this person. The account is only DISABLED:
+    // deletedAt is set, and the phone number is freed (moved to deletedPhone)
+    // so the same number can sign up again later. An admin can restore the
+    // account by clearing deletedAt and putting deletedPhone back in phone.
+    deletedAt: { type: Date, default: null },
+    deletedPhone: { type: String, default: "" },
   },
   { timestamps: true }
 );
@@ -423,6 +431,27 @@ const invoiceSchema = new mongoose.Schema(
 // One bill per kitchen per month.
 invoiceSchema.index({ kitchenId: 1, period: 1 }, { unique: true });
 
+/* --------------------------------------------------------------- message */
+// One chat message about one order. A customer who orders from three kitchens
+// has three separate chats, because every order has its own thread.
+//   channel "kitchen": customer <-> kitchen, from the moment the order is placed
+//                      until a rider is assigned
+//   channel "rider":   customer <-> rider, from assignment until delivery
+// After delivery (or a rejection / cancellation) neither channel can be opened
+// or written to. The messages stay in the database; nobody can reach them.
+const messageSchema = new mongoose.Schema(
+  {
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", required: true },
+    channel: { type: String, enum: ["kitchen", "rider"], required: true },
+    senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    senderRole: { type: String, default: "" },
+    text: { type: String, required: true, trim: true, maxlength: 500 },
+    readAt: { type: Date, default: null }, // when the OTHER person opened it
+  },
+  { timestamps: true }
+);
+messageSchema.index({ orderId: 1, channel: 1, createdAt: 1 });
+
 /* ----------------------------------------------------------------- place */
 // A name on the map that OpenStreetMap does not have. Skardu's areas,
 // roundabouts and shops are mostly missing there, so an admin adds them by
@@ -437,7 +466,15 @@ const placeSchema = new mongoose.Schema(
     type: { type: String, enum: PLACE_TYPES, default: "area" },
     aliases: [{ type: String, trim: true }], // other spellings people use
     notes: { type: String, default: "" },
+    // The centre of the place. For a drawn area this is worked out from the
+    // outline, so search, "nearest place" and distances keep working.
     location: point(),
+    // Optional: the outline of an AREA drawn on the map, corner by corner.
+    // Empty means this place is a single pin.
+    shape: {
+      type: [new mongoose.Schema({ lat: Number, lng: Number }, { _id: false })],
+      default: [],
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
@@ -469,6 +506,7 @@ module.exports = {
   Setting: mongoose.model("Setting", settingSchema),
   Invoice: mongoose.model("Invoice", invoiceSchema),
   Place: mongoose.model("Place", placeSchema),
+  Message: mongoose.model("Message", messageSchema),
   RouteOverride: mongoose.model("RouteOverride", routeOverrideSchema),
   REPORT_REASONS,
   Report: mongoose.model("Report", reportSchema),
